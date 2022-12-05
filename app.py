@@ -4,11 +4,7 @@ import os
 import sqlite3
 import google.oauth2.credentials
 import googleapiclient.discovery
-from flask_cors import CORS
 from googleapiclient.discovery import build
-
-
-# Third-party libraries
 from flask import Flask, redirect, request, url_for
 from flask_login import (
     LoginManager,
@@ -17,6 +13,7 @@ from flask_login import (
     login_user,
     logout_user,
 )
+from flask_cors import CORS
 from oauthlib.oauth2 import WebApplicationClient
 import requests
 
@@ -25,27 +22,25 @@ from db import init_db_command
 from user import User
 
 # Configuration
-# GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", None)
-# GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", None)
-GOOGLE_CLIENT_ID = "614808136378-q4sdiql1hdh12lqst1t10ns9271hvig5.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "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"
-ACCESS_TOKEN_URI = 'https://www.googleapis.com/oauth2/v4/token'
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", None)
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", None)
+ACCESS_TOKEN_URI = os.getenv("ACCESS_TOKEN_URI", None)
+SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", None)
+GOOGLE_DISCOVERY_URL = os.getenv("GOOGLE_DISCOVERY_URL", None)
+SCOPE = os.getenv("SCOPE", None)
 
-GOOGLE_DISCOVERY_URL = (
-    "https://accounts.google.com/.well-known/openid-configuration"
-)
 
 # Flask app setup
 app = Flask(__name__)
 CORS(app)
-app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
+app.secret_key = os.urandom(24)
 
 # User session management setup
 # https://flask-login.readthedocs.io/en/latest
 login_manager = LoginManager()
 login_manager.init_app(app)
 
-# Naive database setup
+# Database setup
 try:
     init_db_command()
 except sqlite3.OperationalError:
@@ -80,8 +75,8 @@ def get_google_provider_cfg():
 
 urlToRedirect = {}
 creds = {}
-@app.route("/login", methods=["POST", "GET"])
-# @app.route("/login")
+
+@app.route("/login")
 def login():
     # Find out what URL to hit for Google login
     google_provider_cfg = get_google_provider_cfg()
@@ -91,18 +86,13 @@ def login():
     # scopes that let you retrieve user's profile from Google
     request_uri = client.prepare_request_uri(
         authorization_endpoint,
-        redirect_uri="https://driveapi.pythonanywhere.com/login" + "/callback",
-        scope=["openid", "email", "profile",'https://www.googleapis.com/auth/drive.metadata.readonly', 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.readonly'],
+        redirect_uri = SERVER_BASE_URL + "/login/callback",
+        scope = SCOPE,
     )
 
-    # redirect_uri=request.base_url + "/callback"
+    # Url to redirect user once logged in
+    urlToRedirect['url'] = request.args.get('url')
 
-    myUrl = request.args.get('url')
-    # urlToRedirect['url'] = request.form['urlRedirect']
-    # urlToRedirect['url'] = 'http://127.0.0.1:5500/index.html'
-    urlToRedirect['url'] = 'http://' + myUrl
-    print('---the url----')
-    print(urlToRedirect['url'])
     return redirect(request_uri)
 
 @app.route("/login/callback")
@@ -110,40 +100,30 @@ def callback():
     # Get authorization code Google sent back to you
     code = request.args.get("code")
 
-    print('---code----')
-    print(code)
-
     # Find out what URL to hit to get tokens that allow you to ask for
     # things on behalf of a user
     google_provider_cfg = get_google_provider_cfg()
     token_endpoint = google_provider_cfg["token_endpoint"]
 
-    # Prepare and send a request to get tokens! Yay tokens!
+    # Prepare and send a request to get tokens
     token_url, headers, body = client.prepare_token_request(
         token_endpoint,
-        authorization_response=request.url,
-        redirect_url=request.base_url,
-        code=code
+        authorization_response = request.url,
+        redirect_url = request.base_url,
+        code = code
     )
     token_response = requests.post(
         token_url,
-        headers=headers,
-        data=body,
-        auth=(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
+        headers = headers,
+        data = body,
+        auth = (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET),
     )
 
     # Parse the tokens!
-    client.parse_request_body_response(json.dumps(token_response.json()))
-    x = client.parse_request_body_response(json.dumps(token_response.json()))
-    print('-------token-----------')
-    print(x["access_token"])
+    tokenResponse = client.parse_request_body_response(json.dumps(token_response.json()))
+    creds['creds'] = build_credentials(tokenResponse["access_token"])
 
-    creds['creds'] = build_credentials(x["access_token"])
-
-
-
-
-    # Now that you have tokens (yay) let's find and hit the URL
+    # Now that you have tokens - find and hit the URL
     # from Google that gives you the user's profile information,
     # including their Google profile image and email
     userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
@@ -176,24 +156,31 @@ def callback():
 
     # Send user back to homepage
     my_url = urlToRedirect['url']
-    print('---my_url----')
-    print(my_url)
     urlToRedirect.clear()
-    return redirect(my_url)
+    return redirect(my_url + '?key=' + userinfo_response.json()["sub"])
 
 
 @app.route("/getdata")
-@login_required
 def getData():
-    fileData = getFiles(creds['creds'])
-    return fileData
+    if request.args.get('key'):
+        uniKey = request.args.get('key')
+
+        if User.get(uniKey):
+            userFromId = User.get(uniKey)
+            logout_user()
+            login_user(userFromId)
+            fileData = getFiles(creds['creds'])
+            return fileData
+        return 'User Not Found'
+    return 'Not Logged In'
 
 @app.route("/logout")
 @login_required
 def logout():
     creds.clear()
     logout_user()
-    return redirect(url_for("index"))
+    homeUrl = request.args.get('url')
+    return redirect(homeUrl)
 
 
 ################################################
@@ -258,7 +245,6 @@ def getFiles(creds):
         result.append(folderObj)
 
     return result
-
 
 
 ###############################################
