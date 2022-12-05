@@ -37,6 +37,7 @@ GOOGLE_DISCOVERY_URL = (
 
 # Flask app setup
 app = Flask(__name__)
+CORS(app)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
 
 # User session management setup
@@ -79,7 +80,8 @@ def get_google_provider_cfg():
 
 urlToRedirect = {}
 creds = {}
-@app.route("/login")
+@app.route("/login", methods=["POST", "GET"])
+# @app.route("/login")
 def login():
     # Find out what URL to hit for Google login
     google_provider_cfg = get_google_provider_cfg()
@@ -89,12 +91,16 @@ def login():
     # scopes that let you retrieve user's profile from Google
     request_uri = client.prepare_request_uri(
         authorization_endpoint,
-        redirect_uri=request.base_url + "/callback",
+        redirect_uri="https://driveapi.pythonanywhere.com/login" + "/callback",
         scope=["openid", "email", "profile",'https://www.googleapis.com/auth/drive.metadata.readonly', 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.readonly'],
     )
 
+    # redirect_uri=request.base_url + "/callback"
+
+    myUrl = request.args.get('url')
     # urlToRedirect['url'] = request.form['urlRedirect']
-    urlToRedirect['url'] = 'http://127.0.0.1:5500/index.html'
+    # urlToRedirect['url'] = 'http://127.0.0.1:5500/index.html'
+    urlToRedirect['url'] = 'http://' + myUrl
     print('---the url----')
     print(urlToRedirect['url'])
     return redirect(request_uri)
@@ -135,7 +141,7 @@ def callback():
     creds['creds'] = build_credentials(x["access_token"])
 
 
-    
+
 
     # Now that you have tokens (yay) let's find and hit the URL
     # from Google that gives you the user's profile information,
@@ -170,9 +176,11 @@ def callback():
 
     # Send user back to homepage
     my_url = urlToRedirect['url']
+    print('---my_url----')
+    print(my_url)
     urlToRedirect.clear()
     return redirect(my_url)
-    
+
 
 @app.route("/getdata")
 @login_required
@@ -190,7 +198,7 @@ def logout():
 
 ################################################
 def build_credentials(token):
-    
+
     return google.oauth2.credentials.Credentials(
                 token,
                 client_id=GOOGLE_CLIENT_ID,
@@ -208,7 +216,7 @@ def getService(service,ps,f,q):
 
 # Functions for Permission
 def get_permission(service, file_id):
-    permission = service.permissions().list(fileId=file_id).execute()  
+    permission = service.permissions().list(fileId=file_id).execute()
     return permission.get('permissions', [])[0]['type']
 
 def set_permission(service, file_id):
@@ -222,14 +230,14 @@ def delete_permission(service, file_id):
 
 
 # Function to get all folders & mp4
-def getFiles(creds):       
+def getFiles(creds):
     service = build('drive', 'v3', credentials=creds)
-    
+
     pageSize = 100
     fields0 = "files(id, name, parents)"
     query0 = "mimeType contains 'folder'"
-    
-    folders = getService(service,pageSize,fields0,query0)     
+
+    folders = getService(service,pageSize,fields0,query0)
     result = []
 
     for folder in folders:
@@ -239,9 +247,9 @@ def getFiles(creds):
         allFiles = getService(service,pageSize,fields,query)
 
         folderObj['folderId'] = folder['id']
-        folderObj['folderName'] = folder['name'] 
-        folderObj['folderParent'] = folder['parents'] 
-        folderObj['folderContent'] = allFiles  
+        folderObj['folderName'] = folder['name']
+        folderObj['folderParent'] = folder['parents']
+        folderObj['folderContent'] = allFiles
 
         childPermissions = get_permission(service, folder['id'])
         if not(childPermissions == 'anyone'):
@@ -256,5 +264,5 @@ def getFiles(creds):
 ###############################################
 if __name__ == "__main__":
     CORS(app)
-    # app.run()
-    app.run(ssl_context="adhoc")
+    app.run()
+    # app.run(ssl_context="adhoc")
