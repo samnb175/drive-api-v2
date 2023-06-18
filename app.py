@@ -232,6 +232,11 @@ def getFiles(creds):
         fields = "files(id,name,webContentLink)"
         query = "'{}' in parents".format(folder['id']) + " and mimeType = 'video/mp4'"
         allFiles = getService(service,pageSize,fields,query)
+        for file in allFiles:
+            if file["id"]:
+                request = service.files().get_media(fileId=file["id"], acknowledgeAbuse=True)
+                downloadUrl = request.uri + "&key=AIzaSyDl-1LKLHvxr3ZgNdYTosvkESOEJwh_oEo"
+                file["webContentLink"] = downloadUrl
 
         folderObj['folderId'] = folder['id']
         folderObj['folderName'] = folder['name']
